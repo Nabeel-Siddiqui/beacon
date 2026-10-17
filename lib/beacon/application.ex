@@ -14,8 +14,7 @@ defmodule Beacon.Application do
       {Phoenix.PubSub, name: Beacon.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: Beacon.Finch},
-      # Start a worker by calling: Beacon.Worker.start_link(arg)
-      # {Beacon.Worker, arg},
+      Beacon.Flags.Cache,
       # Start to serve requests, typically the last entry
       BeaconWeb.Endpoint
     ]

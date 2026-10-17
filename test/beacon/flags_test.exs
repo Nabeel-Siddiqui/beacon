@@ -271,3 +271,90 @@ defmodule Beacon.FlagsTest do
     end
   end
 end
+
+defmodule Beacon.FlagsEnabledTest do
+  use Beacon.DataCase, async: true
+
+  import Beacon.AccountsFixtures
+  import Beacon.FlagsFixtures
+
+  alias Beacon.Flags
+  alias Beacon.Flags.Bucketing
+  alias Beacon.Flags.Cache
+
+  describe "enabled?/4" do
+    test "false when the flag's cached state is disabled" do
+      user = user_fixture()
+
+      :ok =
+        Cache.put(user.id, "production", "new-dashboard", %{
+          enabled: false,
+          rollout_percentage: 100
+        })
+
+      refute Flags.enabled?(user, "new-dashboard", "production", "subject-1")
+    end
+
+    test "true at 100% whenever the flag is enabled" do
+      user = user_fixture()
+
+      :ok =
+        Cache.put(user.id, "production", "new-dashboard", %{
+          enabled: true,
+          rollout_percentage: 100
+        })
+
+      assert Flags.enabled?(user, "new-dashboard", "production", "subject-1")
+      assert Flags.enabled?(user, "new-dashboard", "production", "subject-2")
+    end
+
+    test "false at 0% even when the flag is enabled" do
+      user = user_fixture()
+
+      :ok =
+        Cache.put(user.id, "production", "new-dashboard", %{enabled: true, rollout_percentage: 0})
+
+      refute Flags.enabled?(user, "new-dashboard", "production", "subject-1")
+    end
+
+    test "defaults to false on a cache miss, the same fail-safe default as an unset flag" do
+      user = user_fixture()
+
+      refute Flags.enabled?(user, "never-set", "production", "subject-1")
+    end
+
+    test "a partial rollout agrees with Beacon.Flags.Bucketing directly" do
+      user = user_fixture()
+
+      :ok =
+        Cache.put(user.id, "production", "new-dashboard", %{enabled: true, rollout_percentage: 50})
+
+      for subject <- ["a", "b", "c", "d", "e"] do
+        expected = Bucketing.in_rollout?("new-dashboard", subject, 50)
+        assert Flags.enabled?(user, "new-dashboard", "production", subject) == expected
+      end
+    end
+  end
+
+  describe "list_all_states_for_cache/0" do
+    test "includes every user's flag states in the cache-ready shape" do
+      user = user_fixture()
+      flag = flag_fixture(user, %{key: "cache-shape-flag"})
+      environment = environment_fixture(user, %{name: "cache-shape-env"})
+
+      {:ok, _} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: true, rollout_percentage: 75})
+
+      assert {user.id, "cache-shape-env", "cache-shape-flag", true, 75} in Flags.list_all_states_for_cache()
+    end
+
+    test "excludes flags with no recorded state" do
+      user = user_fixture()
+      _flag = flag_fixture(user, %{key: "never-configured"})
+
+      refute Enum.any?(Flags.list_all_states_for_cache(), fn {_, _, key, _, _} ->
+               key == "never-configured"
+             end)
+    end
+  end
+end

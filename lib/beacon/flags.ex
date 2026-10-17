@@ -11,7 +11,7 @@ defmodule Beacon.Flags do
   import Ecto.Query, warn: false
 
   alias Beacon.Accounts.User
-  alias Beacon.Flags.{AuditLogEntry, Environment, Flag, FlagState}
+  alias Beacon.Flags.{AuditLogEntry, Bucketing, Cache, Environment, Flag, FlagState}
   alias Beacon.Repo
 
   @doc "Creates an environment owned by `user`."
@@ -126,6 +126,49 @@ defmodule Beacon.Flags do
     |> order_by([a], desc: a.inserted_at, desc: a.id)
     |> preload([:environment, :user])
     |> Repo.all()
+  end
+
+  @doc """
+  Every flag's state, denormalized into the shape `Beacon.Flags.Cache`
+  loads directly into ETS: one row per (flag, environment) pair that has
+  a recorded state, keyed by the owning user's id, the environment's
+  name, and the flag's key — not their database ids, since those are
+  what a caller evaluating a flag actually has on hand.
+  """
+  @spec list_all_states_for_cache() :: [
+          {pos_integer(), String.t(), String.t(), boolean(), non_neg_integer()}
+        ]
+  def list_all_states_for_cache do
+    FlagState
+    |> join(:inner, [fs], f in Flag, on: fs.flag_id == f.id)
+    |> join(:inner, [fs, f], e in Environment, on: fs.environment_id == e.id)
+    |> select([fs, f, e], {f.user_id, e.name, f.key, fs.enabled, fs.rollout_percentage})
+    |> Repo.all()
+  end
+
+  @doc """
+  Whether `flag_key` is on for `subject_id` in `environment_name`, for
+  `user`'s flags. Reads the cache, never the database — a flag with no
+  cached state (nothing set yet, or this node hasn't caught up to a
+  recent change) is treated as off, the same fail-safe default
+  `get_flag_state/2` already uses for a flag with no database row.
+  """
+  @spec enabled?(User.t(), String.t(), String.t(), String.t()) :: boolean()
+  def enabled?(%User{} = user, flag_key, environment_name, subject_id)
+      when is_binary(flag_key) and is_binary(environment_name) and is_binary(subject_id) do
+    case Cache.lookup(user.id, environment_name, flag_key) do
+      {:ok, %{enabled: false}} ->
+        false
+
+      {:ok, %{enabled: true, rollout_percentage: 100}} ->
+        true
+
+      {:ok, %{enabled: true, rollout_percentage: percentage}} ->
+        Bucketing.in_rollout?(flag_key, subject_id, percentage)
+
+      :error ->
+        false
+    end
   end
 
   defp cast_id(id) do

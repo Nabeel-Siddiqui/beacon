@@ -61,6 +61,12 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Whether Beacon.Flags.Cache eagerly loads every flag's state from
+# Postgres at boot. Off in test (config/test.exs) - the application
+# starts before any test owns a sandboxed connection, so an eager
+# read here would crash the whole supervision tree.
+config :beacon, :warm_cache_on_boot, true
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
