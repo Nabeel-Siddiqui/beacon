@@ -73,4 +73,62 @@ defmodule Beacon.Flags.CacheTest do
                {:ok, %{enabled: true, rollout_percentage: 42}}
     end
   end
+
+  describe "propagation via broadcast" do
+    test "set_flag_state/4 broadcasts, and this node's cache updates from it — not a direct call" do
+      user = user_fixture()
+      flag = flag_fixture(user, %{key: "prop-flag"})
+      environment = environment_fixture(user, %{name: "prop-env"})
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: true, rollout_percentage: 60})
+
+      # A round trip after the broadcast: GenServer processes its mailbox
+      # in order, so if this call's reply has come back, the broadcast
+      # message — sent from this same test process, earlier — has
+      # already been handled.
+      :ok = Cache.sync()
+
+      assert Cache.lookup(user.id, "prop-env", "prop-flag") ==
+               {:ok, %{enabled: true, rollout_percentage: 60}}
+    end
+
+    test "a second, independently-named cache instance updates too — standing in for a second node" do
+      user = user_fixture()
+      flag = flag_fixture(user, %{key: "prop-flag-2"})
+      environment = environment_fixture(user, %{name: "prop-env-2"})
+
+      node_b = :"beacon_cache_test_node_#{System.unique_integer([:positive])}"
+      start_supervised!({Cache, name: node_b})
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: true, rollout_percentage: 15})
+
+      :ok = Cache.sync()
+      :ok = Cache.sync(node_b)
+
+      assert Cache.lookup(user.id, "prop-env-2", "prop-flag-2") ==
+               {:ok, %{enabled: true, rollout_percentage: 15}}
+
+      assert Cache.lookup(node_b, user.id, "prop-env-2", "prop-flag-2") ==
+               {:ok, %{enabled: true, rollout_percentage: 15}}
+    end
+
+    test "a later change propagates too, not just the first one for a flag" do
+      user = user_fixture()
+      flag = flag_fixture(user, %{key: "prop-flag-3"})
+      environment = environment_fixture(user, %{name: "prop-env-3"})
+
+      {:ok, _} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: true, rollout_percentage: 10})
+
+      {:ok, _} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: false, rollout_percentage: 0})
+
+      :ok = Cache.sync()
+
+      assert Cache.lookup(user.id, "prop-env-3", "prop-flag-3") ==
+               {:ok, %{enabled: false, rollout_percentage: 0}}
+    end
+  end
 end

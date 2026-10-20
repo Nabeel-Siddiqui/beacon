@@ -112,10 +112,28 @@ defmodule Beacon.Flags do
       end)
       |> Repo.transaction()
       |> case do
-        {:ok, %{flag_state: flag_state}} -> {:ok, flag_state}
-        {:error, :flag_state, changeset, _changes} -> {:error, changeset}
+        {:ok, %{flag_state: flag_state}} ->
+          broadcast_state_change(user, environment, flag, flag_state)
+          {:ok, flag_state}
+
+        {:error, :flag_state, changeset, _changes} ->
+          {:error, changeset}
       end
     end
+  end
+
+  # The only way a flag's cached state ever changes, on this node or any
+  # other: every Beacon.Flags.Cache instance subscribes to this topic
+  # and updates its own ETS table from the broadcast. There's no direct
+  # call from here into the local cache — a same-node update and a
+  # cross-node one go through the exact same path.
+  defp broadcast_state_change(user, environment, flag, flag_state) do
+    Phoenix.PubSub.broadcast(
+      Beacon.PubSub,
+      Cache.topic(),
+      {:flag_state_changed, {user.id, environment.name, flag.key},
+       %{enabled: flag_state.enabled, rollout_percentage: flag_state.rollout_percentage}}
+    )
   end
 
   @doc "Lists `flag`'s audit log, newest first."
