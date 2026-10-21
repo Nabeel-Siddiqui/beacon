@@ -60,6 +60,13 @@ defmodule BeaconWeb.Router do
       on_mount: [{BeaconWeb.UserAuth, :ensure_authenticated}] do
       live "/users/settings", UserSettingsLive, :edit
       live "/users/settings/confirm_email/:token", UserSettingsLive, :confirm_email
+
+      live "/flags", FlagLive.Index, :index
+      live "/flags/new", FlagLive.Index, :new
+      live "/flags/:id", FlagLive.Show, :show
+
+      live "/environments", EnvironmentLive.Index, :index
+      live "/environments/new", EnvironmentLive.Index, :new
     end
   end
 

@@ -14,6 +14,12 @@ defmodule Beacon.Flags do
   alias Beacon.Flags.{AuditLogEntry, Bucketing, Cache, Environment, Flag, FlagState}
   alias Beacon.Repo
 
+  @doc "Returns a changeset for tracking a new environment's form changes, without persisting anything."
+  @spec change_environment(map()) :: Ecto.Changeset.t()
+  def change_environment(attrs \\ %{}) do
+    Environment.changeset(%Environment{}, attrs)
+  end
+
   @doc "Creates an environment owned by `user`."
   @spec create_environment(User.t(), map()) ::
           {:ok, Environment.t()} | {:error, Ecto.Changeset.t()}
@@ -41,6 +47,12 @@ defmodule Beacon.Flags do
     |> where([e], e.user_id == ^user.id)
     |> order_by([e], asc: e.name)
     |> Repo.all()
+  end
+
+  @doc "Returns a changeset for tracking a new flag's form changes, without persisting anything."
+  @spec change_flag(map()) :: Ecto.Changeset.t()
+  def change_flag(attrs \\ %{}) do
+    Flag.changeset(%Flag{}, attrs)
   end
 
   @doc "Creates a flag owned by `user`."
@@ -114,6 +126,7 @@ defmodule Beacon.Flags do
       |> case do
         {:ok, %{flag_state: flag_state}} ->
           broadcast_state_change(user, environment, flag, flag_state)
+          broadcast_flag_updated(flag)
           {:ok, flag_state}
 
         {:error, :flag_state, changeset, _changes} ->
@@ -135,6 +148,24 @@ defmodule Beacon.Flags do
        %{enabled: flag_state.enabled, rollout_percentage: flag_state.rollout_percentage}}
     )
   end
+
+  @doc """
+  Subscribes the caller to `flag`'s own changes: `{:flag_updated, flag_id}`,
+  sent whenever `set_flag_state/4` succeeds for this flag in any
+  environment. A dashboard watching one flag re-reads its state and
+  audit log on this message rather than trying to patch either
+  incrementally — simpler, and the query is cheap at this scale.
+  """
+  @spec subscribe_to_flag(Flag.t()) :: :ok | {:error, term()}
+  def subscribe_to_flag(%Flag{} = flag) do
+    Phoenix.PubSub.subscribe(Beacon.PubSub, flag_topic(flag.id))
+  end
+
+  defp broadcast_flag_updated(flag) do
+    Phoenix.PubSub.broadcast(Beacon.PubSub, flag_topic(flag.id), {:flag_updated, flag.id})
+  end
+
+  defp flag_topic(flag_id), do: "flag:#{flag_id}"
 
   @doc "Lists `flag`'s audit log, newest first."
   @spec list_audit_log(Flag.t()) :: [AuditLogEntry.t()]
