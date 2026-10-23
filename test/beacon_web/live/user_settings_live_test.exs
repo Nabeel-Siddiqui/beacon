@@ -25,6 +25,38 @@ defmodule BeaconWeb.UserSettingsLiveTest do
     end
   end
 
+  describe "API tokens" do
+    setup %{conn: conn} do
+      user = user_fixture()
+      %{conn: log_in_user(conn, user), user: user}
+    end
+
+    test "starts with no tokens", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/users/settings")
+      assert html =~ "No API tokens yet."
+    end
+
+    test "generating a token shows it once, in a flash, then lists it", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      html = lv |> element("button", "Generate new token") |> render_click()
+
+      assert html =~ "New API token"
+      refute html =~ "No API tokens yet."
+    end
+
+    test "revoking a token removes it from the list", %{conn: conn, user: user} do
+      _token = Accounts.create_user_api_token(user)
+      {:ok, lv, html} = live(conn, ~p"/users/settings")
+      refute html =~ "No API tokens yet."
+
+      html = lv |> element("button", "Revoke") |> render_click()
+
+      assert html =~ "No API tokens yet."
+      assert Accounts.list_user_api_tokens(user) == []
+    end
+  end
+
   describe "update email form" do
     setup %{conn: conn} do
       password = valid_user_password()

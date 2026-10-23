@@ -350,4 +350,70 @@ defmodule Beacon.Accounts do
       {:error, :user, changeset, _} -> {:error, changeset}
     end
   end
+
+  ## API tokens
+
+  @doc """
+  Generates a new API token for `user`, used to authenticate requests
+  to the flag-evaluation API from outside this app. Only the token's
+  hash is stored — the raw value returned here is the only time it's
+  ever visible, so the caller has to save it immediately.
+  """
+  @spec create_user_api_token(User.t()) :: String.t()
+  def create_user_api_token(%User{} = user) do
+    {encoded_token, user_token} = UserToken.build_api_token(user)
+    Repo.insert!(user_token)
+    encoded_token
+  end
+
+  @doc """
+  Lists `user`'s API tokens, newest first. Never includes the raw
+  token value — only its hash is ever stored, so there's nothing to
+  list but each token's id and when it was created.
+  """
+  @spec list_user_api_tokens(User.t()) :: [UserToken.t()]
+  def list_user_api_tokens(%User{} = user) do
+    UserToken
+    |> where([t], t.user_id == ^user.id and t.context == "api")
+    |> order_by([t], desc: t.inserted_at)
+    |> Repo.all()
+  end
+
+  @doc """
+  Revokes `user`'s API token with the given id. Scoped to `user`, so
+  one user can never revoke another's token, even by guessing an id.
+  """
+  @spec delete_user_api_token(User.t(), term()) :: :ok
+  def delete_user_api_token(%User{} = user, id) do
+    case cast_id(id) do
+      {:ok, int_id} ->
+        UserToken
+        |> where([t], t.user_id == ^user.id and t.context == "api" and t.id == ^int_id)
+        |> Repo.delete_all()
+
+      :error ->
+        :ok
+    end
+
+    :ok
+  end
+
+  @doc """
+  Gets the user for a given raw API token, or `nil` if it's missing,
+  malformed, or has been revoked.
+  """
+  @spec get_user_by_api_token(String.t()) :: User.t() | nil
+  def get_user_by_api_token(token) when is_binary(token) do
+    case UserToken.verify_api_token_query(token) do
+      {:ok, query} -> Repo.one(query)
+      :error -> nil
+    end
+  end
+
+  defp cast_id(id) do
+    case Integer.parse(to_string(id)) do
+      {int_id, ""} -> {:ok, int_id}
+      _ -> :error
+    end
+  end
 end

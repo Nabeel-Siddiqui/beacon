@@ -500,6 +500,83 @@ defmodule Beacon.AccountsTest do
     end
   end
 
+  describe "create_user_api_token/1" do
+    test "generates a token hashed in the database" do
+      user = user_fixture()
+      token = Accounts.create_user_api_token(user)
+
+      assert user_token = Repo.get_by(UserToken, user_id: user.id, context: "api")
+      refute user_token.token == token
+    end
+  end
+
+  describe "list_user_api_tokens/1" do
+    test "lists only the given user's api tokens, newest first" do
+      user = user_fixture()
+      other_user = user_fixture()
+
+      _ = Accounts.create_user_api_token(other_user)
+      _first = Accounts.create_user_api_token(user)
+      _second = Accounts.create_user_api_token(user)
+
+      assert [newest, oldest] = Accounts.list_user_api_tokens(user)
+      assert newest.inserted_at >= oldest.inserted_at
+    end
+
+    test "does not include session tokens" do
+      user = user_fixture()
+      _ = Accounts.generate_user_session_token(user)
+
+      assert Accounts.list_user_api_tokens(user) == []
+    end
+  end
+
+  describe "delete_user_api_token/2" do
+    test "revokes the token so it no longer authenticates" do
+      user = user_fixture()
+      token = Accounts.create_user_api_token(user)
+      [%{id: id}] = Accounts.list_user_api_tokens(user)
+
+      assert Accounts.delete_user_api_token(user, id) == :ok
+      refute Accounts.get_user_by_api_token(token)
+    end
+
+    test "does not revoke another user's token" do
+      user = user_fixture()
+      other_user = user_fixture()
+      token = Accounts.create_user_api_token(other_user)
+      [%{id: id}] = Accounts.list_user_api_tokens(other_user)
+
+      assert Accounts.delete_user_api_token(user, id) == :ok
+      assert Accounts.get_user_by_api_token(token)
+    end
+
+    test "returns :ok for a non-integer id instead of raising" do
+      assert Accounts.delete_user_api_token(user_fixture(), "not-an-id") == :ok
+    end
+  end
+
+  describe "get_user_by_api_token/1" do
+    test "returns the user for a valid token" do
+      user = user_fixture()
+      token = Accounts.create_user_api_token(user)
+
+      assert %User{id: id} = Accounts.get_user_by_api_token(token)
+      assert id == user.id
+    end
+
+    test "returns nil for an invalid token" do
+      refute Accounts.get_user_by_api_token("not-a-real-token")
+    end
+
+    test "returns nil for a session token presented as an api token" do
+      user = user_fixture()
+      session_token = Accounts.generate_user_session_token(user)
+
+      refute Accounts.get_user_by_api_token(Base.url_encode64(session_token, padding: false))
+    end
+  end
+
   describe "inspect/2 for the User module" do
     test "does not include password" do
       refute inspect(%User{password: "123456"}) =~ "password: \"123456\""

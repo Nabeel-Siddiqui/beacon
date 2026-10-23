@@ -69,6 +69,30 @@ defmodule BeaconWeb.UserSettingsLive do
           </:actions>
         </.simple_form>
       </div>
+      <div>
+        <.header>
+          API tokens
+          <:subtitle>
+            Used to call the flag-evaluation API from outside this app. Each token is shown
+            once, when it's generated — if you lose it, revoke it and generate a new one.
+          </:subtitle>
+          <:actions>
+            <.button phx-click="generate_api_token">Generate new token</.button>
+          </:actions>
+        </.header>
+
+        <.table id="api-tokens" rows={@api_tokens}>
+          <:col :let={token} label="Id">{token.id}</:col>
+          <:col :let={token} label="Created">{Calendar.strftime(token.inserted_at, "%Y-%m-%d")}</:col>
+          <:action :let={token}>
+            <.button phx-click="revoke_api_token" phx-value-id={token.id}>Revoke</.button>
+          </:action>
+        </.table>
+
+        <p :if={@api_tokens == []} class="mt-6 text-sm text-zinc-500">
+          No API tokens yet.
+        </p>
+      </div>
     </div>
     """
   end
@@ -99,6 +123,7 @@ defmodule BeaconWeb.UserSettingsLive do
       |> assign(:email_form, to_form(email_changeset))
       |> assign(:password_form, to_form(password_changeset))
       |> assign(:trigger_submit, false)
+      |> assign(:api_tokens, Accounts.list_user_api_tokens(user))
 
     {:ok, socket}
   end
@@ -163,5 +188,27 @@ defmodule BeaconWeb.UserSettingsLive do
       {:error, changeset} ->
         {:noreply, assign(socket, password_form: to_form(changeset))}
     end
+  end
+
+  def handle_event("generate_api_token", _params, socket) do
+    user = socket.assigns.current_user
+    token = Accounts.create_user_api_token(user)
+
+    info =
+      "New API token (copy it now, it won't be shown again): #{token}"
+
+    socket =
+      socket
+      |> put_flash(:info, info)
+      |> assign(:api_tokens, Accounts.list_user_api_tokens(user))
+
+    {:noreply, socket}
+  end
+
+  def handle_event("revoke_api_token", %{"id" => id}, socket) do
+    user = socket.assigns.current_user
+    :ok = Accounts.delete_user_api_token(user, id)
+
+    {:noreply, assign(socket, :api_tokens, Accounts.list_user_api_tokens(user))}
   end
 end

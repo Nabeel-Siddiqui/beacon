@@ -29,6 +29,10 @@ skills.
   and when — visible live on the flag's own page.
 - A change made from one browser tab, or by another person, shows up on
   an open dashboard with no reload.
+- An external service can evaluate your flags too: generate an API
+  token from Settings, then `GET /api/flags/:key/enabled` with it —
+  the same cache lookup the dashboard itself uses, just reachable from
+  outside this app.
 
 ## Why Elixir for this, specifically
 
@@ -75,6 +79,22 @@ last state it knew about rather than blocking on a query — a flag
 service staying fast matters more than a few milliseconds of
 staleness during propagation.
 
+## SDK endpoint
+
+```bash
+curl -H "Authorization: Bearer $BEACON_TOKEN" \
+  "https://your-beacon/api/flags/checkout-v2/enabled?environment=production&subject=user-42"
+# => {"flag":"checkout-v2","environment":"production","subject":"user-42","enabled":true}
+```
+
+Generate a token from Settings (`/users/settings`) — it's shown once,
+at creation, since only its hash is ever stored. The endpoint calls
+the exact same `Flags.enabled?/4` the dashboard and every in-app
+caller use, scoped to the token's owner, and always answers `enabled:
+false` for an unknown flag or environment rather than erroring — a
+typo in a flag key should never look different from a flag that's
+genuinely off. [ADR 4](docs/decisions/0004-api-tokens-dont-expire.md)
+
 ## Tech stack
 
 Phoenix 1.7 + LiveView · Ecto/Postgres · ETS (read cache) ·
@@ -101,20 +121,21 @@ through the same `set_flag_state/4` the dashboard uses.
 To check the whole thing end to end:
 
 ```bash
-mix test                # 190 tests, no real network calls
+mix test                # 210 tests, no real network calls
 mix credo --strict
 mix dialyzer
 ```
 
 ## Design decisions
 
-Three of the less-obvious calls are written up in
+Four of the less-obvious calls are written up in
 [`docs/decisions/`](docs/decisions/), each with the alternative
 considered and why it lost:
 
 1. [Postgres is the source of truth, ETS is a read cache](docs/decisions/0001-postgres-source-of-truth-ets-cache.md)
 2. [Rollout percentages are deterministic, not random](docs/decisions/0002-deterministic-bucketing.md)
 3. [The cache doesn't load from Postgres at boot in test](docs/decisions/0003-cache-boot-load-is-config-gated.md)
+4. [API tokens don't expire; they're revoked](docs/decisions/0004-api-tokens-dont-expire.md)
 
 `CLAUDE.md` in the repo root has the conventions every phase of this
 build held to (contexts own all business logic, the web layer never
@@ -123,10 +144,6 @@ touches `Repo` directly, every public context function has `@doc` +
 
 ## What I'd do next
 
-- **An SDK endpoint.** `Flags.enabled?/4` is callable from inside this
-  app, but an external service evaluating a flag needs an API — a
-  small, token-authenticated endpoint wrapping the same function is the
-  natural next piece.
 - **Scheduled or expiring flags.** A flag meant for a short-lived
   experiment currently has to be turned off manually. An "expires at"
   field and a background job to flip it would close that gap.
@@ -137,3 +154,7 @@ touches `Repo` directly, every public context function has `@doc` +
   to work across nodes (see [ADR 1](docs/decisions/0001-postgres-source-of-truth-ets-cache.md)),
   but, like the rest of this series, this has only ever actually run as
   one node so far.
+- **Scoped API tokens.** A token currently has blanket read access to
+  every flag the user owns, with no rate limiting. Separate tokens per
+  environment, or a per-token request quota, is the natural next step
+  before handing one to a production service.

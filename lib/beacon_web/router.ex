@@ -15,6 +15,7 @@ defmodule BeaconWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug BeaconWeb.ApiAuth
   end
 
   scope "/", BeaconWeb do
@@ -23,10 +24,11 @@ defmodule BeaconWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", BeaconWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", BeaconWeb.API do
+    pipe_through :api
+
+    get "/flags/:key/enabled", FlagController, :enabled
+  end
 
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:beacon, :dev_routes) do

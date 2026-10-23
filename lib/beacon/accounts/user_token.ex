@@ -13,6 +13,8 @@ defmodule Beacon.Accounts.UserToken do
   @change_email_validity_in_days 7
   @session_validity_in_days 60
 
+  @type t :: %__MODULE__{}
+
   schema "users_tokens" do
     field :token, :binary
     field :context, :string
@@ -128,6 +130,38 @@ defmodule Beacon.Accounts.UserToken do
 
   defp days_for_context("confirm"), do: @confirm_validity_in_days
   defp days_for_context("reset_password"), do: @reset_password_validity_in_days
+
+  @doc """
+  Builds an API token for `user`, used to authenticate requests to the
+  flag-evaluation API from outside this app. Unlike a session or email
+  token, it has no expiry of its own — it's valid until explicitly
+  revoked. The raw token is returned once; only its hash is persisted.
+  """
+  def build_api_token(user) do
+    build_hashed_token(user, "api", nil)
+  end
+
+  @doc """
+  Checks if the given API token is valid and returns its underlying
+  lookup query. There's no expiry window to check, unlike
+  `verify_email_token_query/2` — an API token is valid until revoked.
+  """
+  def verify_api_token_query(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, decoded_token} ->
+        hashed_token = :crypto.hash(@hash_algorithm, decoded_token)
+
+        query =
+          from token in by_token_and_context_query(hashed_token, "api"),
+            join: user in assoc(token, :user),
+            select: user
+
+        {:ok, query}
+
+      :error ->
+        :error
+    end
+  end
 
   @doc """
   Checks if the token is valid and returns its underlying lookup query.
