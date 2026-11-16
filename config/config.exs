@@ -67,6 +67,19 @@ config :phoenix, :json_library, Jason
 # read here would crash the whole supervision tree.
 config :beacon, :warm_cache_on_boot, true
 
+# The "maintenance" queue runs ExpireFlagsWorker, which disables any
+# flag state whose expires_at has passed (see ADR 5). Checked every 5
+# minutes — a feature flag's expiry doesn't need second-level
+# precision, and this keeps the job cheap and infrequent.
+config :beacon, Oban,
+  engine: Oban.Engines.Basic,
+  repo: Beacon.Repo,
+  queues: [maintenance: 1],
+  plugins: [
+    {Oban.Plugins.Cron, crontab: [{"*/5 * * * *", Beacon.Flags.ExpireFlagsWorker}]},
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
+  ]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

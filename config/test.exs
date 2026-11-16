@@ -40,3 +40,8 @@ config :phoenix_live_view,
   enable_expensive_runtime_checks: true
 
 config :beacon, :warm_cache_on_boot, false
+
+# Oban.Testing's :manual mode — jobs are inserted into the database (so
+# uniqueness/argument assertions still work) but never picked up by a
+# real queue. Tests trigger perform/1 explicitly via Oban.Testing.
+config :beacon, Oban, testing: :manual

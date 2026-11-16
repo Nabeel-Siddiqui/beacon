@@ -167,6 +167,35 @@ defmodule Beacon.Flags do
 
   defp flag_topic(flag_id), do: "flag:#{flag_id}"
 
+  @doc """
+  Disables every flag state whose `expires_at` has passed, through the
+  exact same `set_flag_state/4` the dashboard itself uses — each one is
+  a real, audited change, attributed to the flag's own owner, not a
+  bypass of the normal write path. Clears `expires_at` back to `nil` in
+  the same update, so it isn't picked up again next run. Called by
+  `Beacon.Flags.ExpireFlagsWorker` on a 5-minute cron.
+  """
+  @spec expire_due_flag_states() :: :ok
+  def expire_due_flag_states do
+    FlagState
+    |> where([fs], fs.enabled == true)
+    |> where([fs], not is_nil(fs.expires_at) and fs.expires_at <= ^DateTime.utc_now())
+    |> join(:inner, [fs], f in Flag, on: fs.flag_id == f.id)
+    |> join(:inner, [fs, f], e in Environment, on: fs.environment_id == e.id)
+    |> select([fs, f, e], {f, e})
+    |> Repo.all()
+    |> Enum.each(fn {flag, environment} ->
+      user = Repo.get!(User, flag.user_id)
+
+      {:ok, _state} =
+        set_flag_state(user, flag, environment, %{
+          enabled: false,
+          rollout_percentage: 0,
+          expires_at: nil
+        })
+    end)
+  end
+
   @doc "Lists `flag`'s audit log, newest first."
   @spec list_audit_log(Flag.t()) :: [AuditLogEntry.t()]
   def list_audit_log(%Flag{} = flag) do

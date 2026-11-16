@@ -14,6 +14,7 @@ defmodule Beacon.Application do
       {Phoenix.PubSub, name: Beacon.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: Beacon.Finch},
+      {Oban, Application.fetch_env!(:beacon, Oban)},
       Beacon.Flags.Cache,
       # Start to serve requests, typically the last entry
       BeaconWeb.Endpoint

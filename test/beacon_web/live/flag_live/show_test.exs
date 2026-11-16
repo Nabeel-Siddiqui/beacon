@@ -57,6 +57,59 @@ defmodule BeaconWeb.FlagLive.ShowTest do
       assert entry.rollout_percentage == 50
     end
 
+    test "setting an expiry shows the auto-disable notice", %{conn: conn, user: user} do
+      flag = flag_fixture(user)
+      environment = environment_fixture(user, %{name: "production"})
+
+      {:ok, view, _html} = live(conn, ~p"/flags/#{flag}")
+
+      view
+      |> form("form", %{
+        "environment_id" => environment.id,
+        "enabled" => "true",
+        "rollout_percentage" => "100",
+        "expires_at" => "2099-01-01T00:00"
+      })
+      |> render_submit()
+
+      html = render(view)
+      assert html =~ "Auto-disables"
+      assert html =~ "2099-01-01"
+
+      state = Flags.get_flag_state(flag, environment)
+      assert state.expires_at != nil
+    end
+
+    test "clearing the expires_at field removes the auto-disable notice", %{
+      conn: conn,
+      user: user
+    } do
+      flag = flag_fixture(user)
+      environment = environment_fixture(user, %{name: "production"})
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{
+          enabled: true,
+          rollout_percentage: 100,
+          expires_at: DateTime.add(DateTime.utc_now(), 3600, :second)
+        })
+
+      {:ok, view, html} = live(conn, ~p"/flags/#{flag}")
+      assert html =~ "Auto-disables"
+
+      view
+      |> form("form", %{
+        "environment_id" => environment.id,
+        "enabled" => "true",
+        "rollout_percentage" => "100",
+        "expires_at" => ""
+      })
+      |> render_submit()
+
+      refute render(view) =~ "Auto-disables"
+      assert Flags.get_flag_state(flag, environment).expires_at == nil
+    end
+
     test "rejects a rollout percentage outside 0-100", %{conn: conn, user: user} do
       flag = flag_fixture(user)
       environment = environment_fixture(user, %{name: "production"})

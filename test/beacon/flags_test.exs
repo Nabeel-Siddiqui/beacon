@@ -211,6 +211,61 @@ defmodule Beacon.FlagsTest do
       assert "must be less than or equal to 100" in errors_on(changeset).rollout_percentage
     end
 
+    test "accepts a future expires_at" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert {:ok, state} =
+               Flags.set_flag_state(user, flag, environment, %{
+                 enabled: true,
+                 rollout_percentage: 100,
+                 expires_at: future
+               })
+
+      assert DateTime.truncate(state.expires_at, :second) == DateTime.truncate(future, :second)
+    end
+
+    test "rejects a past expires_at" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      past = DateTime.add(DateTime.utc_now(), -3600, :second)
+
+      assert {:error, changeset} =
+               Flags.set_flag_state(user, flag, environment, %{
+                 enabled: true,
+                 rollout_percentage: 100,
+                 expires_at: past
+               })
+
+      assert "must be in the future" in errors_on(changeset).expires_at
+    end
+
+    test "allows clearing expires_at back to nil" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{
+          enabled: true,
+          rollout_percentage: 100,
+          expires_at: future
+        })
+
+      assert {:ok, cleared} =
+               Flags.set_flag_state(user, flag, environment, %{
+                 enabled: true,
+                 rollout_percentage: 100,
+                 expires_at: nil
+               })
+
+      assert cleared.expires_at == nil
+    end
+
     test "refuses to change a flag that belongs to another user" do
       owner = user_fixture()
       other = user_fixture()
@@ -268,6 +323,89 @@ defmodule Beacon.FlagsTest do
         })
 
       assert Flags.list_audit_log(flag) == []
+    end
+  end
+
+  describe "expire_due_flag_states/0" do
+    test "disables a state whose expiry has already passed, and records it in the audit log" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{
+          enabled: true,
+          rollout_percentage: 100,
+          expires_at: future
+        })
+
+      # Sabotage it to "already past" after the fact — the changeset's
+      # future-only validation only runs when a caller sets it, not on
+      # a direct Repo update, which is the only way to get an
+      # already-expired row into the database for this test.
+      Repo.update_all(FlagState, set: [expires_at: DateTime.add(future, -7200, :second)])
+
+      assert :ok = Flags.expire_due_flag_states()
+
+      expired = Flags.get_flag_state(flag, environment)
+      assert expired.enabled == false
+      assert expired.rollout_percentage == 0
+      assert expired.expires_at == nil
+
+      assert [newest, _original] = Flags.list_audit_log(flag)
+      assert newest.enabled == false
+      assert newest.user_id == user.id
+    end
+
+    test "leaves a state with no expiry untouched" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: true, rollout_percentage: 100})
+
+      assert :ok = Flags.expire_due_flag_states()
+
+      still_on = Flags.get_flag_state(flag, environment)
+      assert still_on.enabled == true
+    end
+
+    test "leaves a state with a future expiry untouched" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{
+          enabled: true,
+          rollout_percentage: 100,
+          expires_at: future
+        })
+
+      assert :ok = Flags.expire_due_flag_states()
+
+      still_on = Flags.get_flag_state(flag, environment)
+      assert still_on.enabled == true
+    end
+
+    test "leaves an already-disabled, expired state alone (nothing to disable)" do
+      user = user_fixture()
+      flag = flag_fixture(user)
+      environment = environment_fixture(user)
+      past = DateTime.add(DateTime.utc_now(), -3600, :second)
+
+      {:ok, _state} =
+        Flags.set_flag_state(user, flag, environment, %{enabled: false, rollout_percentage: 0})
+
+      Repo.update_all(FlagState, set: [expires_at: past])
+
+      audit_count_before = length(Flags.list_audit_log(flag))
+      assert :ok = Flags.expire_due_flag_states()
+
+      assert length(Flags.list_audit_log(flag)) == audit_count_before
     end
   end
 end

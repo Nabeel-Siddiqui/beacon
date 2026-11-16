@@ -19,6 +19,9 @@ skills.
 - Toggle a flag on or off, and set a rollout percentage, per
   environment independently — a flag can be fully on in staging and at
   25% in production at the same time.
+- Give a flag's state an optional expiry. A short-lived experiment
+  turns itself off automatically (within 5 minutes of the deadline) —
+  the audit log shows it the same way a person flipping it off would.
 - Evaluating a flag is a local, in-memory lookup, not a database query
   — `Flags.enabled?/4` reads an ETS table, never Postgres directly.
 - A rollout percentage is deterministic: the same subject (a user id,
@@ -95,11 +98,20 @@ false` for an unknown flag or environment rather than erroring — a
 typo in a flag key should never look different from a flag that's
 genuinely off. [ADR 4](docs/decisions/0004-api-tokens-dont-expire.md)
 
+## Flag expiry
+
+Setting an "expires" time on a flag's state (in the per-environment
+form on the flag's own page) auto-disables it once that time passes —
+checked every 5 minutes by `ExpireFlagsWorker` (Oban), through the
+same `set_flag_state/4` the dashboard itself uses, so the audit log
+shows it exactly like a person flipping it off would.
+[ADR 5](docs/decisions/0005-flag-expiry-is-a-cron-sweep.md)
+
 ## Tech stack
 
 Phoenix 1.7 + LiveView · Ecto/Postgres · ETS (read cache) ·
-Phoenix.PubSub (propagation) · Credo (`--strict`) + Dialyzer in CI ·
-GitHub Actions · Docker (`mix release`).
+Phoenix.PubSub (propagation) · Oban (flag expiry) · Credo (`--strict`)
++ Dialyzer in CI · GitHub Actions · Docker (`mix release`).
 
 ## Running it locally
 
@@ -121,14 +133,14 @@ through the same `set_flag_state/4` the dashboard uses.
 To check the whole thing end to end:
 
 ```bash
-mix test                # 210 tests, no real network calls
+mix test                # 220 tests, no real network calls
 mix credo --strict
 mix dialyzer
 ```
 
 ## Design decisions
 
-Four of the less-obvious calls are written up in
+Five of the less-obvious calls are written up in
 [`docs/decisions/`](docs/decisions/), each with the alternative
 considered and why it lost:
 
@@ -136,6 +148,7 @@ considered and why it lost:
 2. [Rollout percentages are deterministic, not random](docs/decisions/0002-deterministic-bucketing.md)
 3. [The cache doesn't load from Postgres at boot in test](docs/decisions/0003-cache-boot-load-is-config-gated.md)
 4. [API tokens don't expire; they're revoked](docs/decisions/0004-api-tokens-dont-expire.md)
+5. [Flag expiry is a 5-minute cron sweep, not a scheduled job per expiry](docs/decisions/0005-flag-expiry-is-a-cron-sweep.md)
 
 `CLAUDE.md` in the repo root has the conventions every phase of this
 build held to (contexts own all business logic, the web layer never
@@ -144,9 +157,9 @@ touches `Repo` directly, every public context function has `@doc` +
 
 ## What I'd do next
 
-- **Scheduled or expiring flags.** A flag meant for a short-lived
-  experiment currently has to be turned off manually. An "expires at"
-  field and a background job to flip it would close that gap.
+- **Scheduling a flag's start, not just its expiry.** The opposite of
+  expiry — a flag that turns itself *on* at a future time — would
+  reuse the same cron sweep, just checking a `starts_at` instead.
 - **Targeting beyond percentage.** Rollouts are percentage-only right
   now. Targeting a specific list of subject ids, or a property of the
   subject, is a common next step for a real flagging tool.

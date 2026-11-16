@@ -13,6 +13,9 @@ where this app actually needs it, not speculatively.
 - **The web layer (controllers, LiveViews, plugs) never calls `Repo`
   directly** and never builds `Ecto.Query`s itself. It calls context
   functions.
+- Oban workers call context functions too; they don't reach into `Repo`
+  directly. `ExpireFlagsWorker` is a thin shell around
+  `Flags.expire_due_flag_states/0`.
 - **Postgres is the source of truth. ETS is a read cache, never the other
   way around.** A flag's state is written to Postgres first; only after
   that succeeds does it propagate to each node's in-memory table. If ETS

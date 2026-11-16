@@ -72,8 +72,23 @@ defmodule BeaconWeb.FlagLive.Show do
           class="w-20 rounded-lg border-zinc-300 text-sm"
         />
         <span class="text-sm text-zinc-500">%</span>
+        <label class="flex items-center gap-2 text-sm text-zinc-700">
+          Expires
+          <input
+            type="datetime-local"
+            name="expires_at"
+            value={expires_at_input_value(state_for(@flag_states, environment.id))}
+            class="rounded-lg border-zinc-300 text-sm"
+          />
+        </label>
         <.button type="submit">Save</.button>
       </form>
+      <span :if={state_for(@flag_states, environment.id).expires_at} class="text-sm text-zinc-500">
+        Auto-disables {Calendar.strftime(
+          state_for(@flag_states, environment.id).expires_at,
+          "%Y-%m-%d %H:%M UTC"
+        )}
+      </span>
     </div>
 
     <.header class="mt-10">Audit log</.header>
@@ -99,7 +114,8 @@ defmodule BeaconWeb.FlagLive.Show do
 
     attrs = %{
       enabled: params["enabled"] == "true",
-      rollout_percentage: params["rollout_percentage"]
+      rollout_percentage: params["rollout_percentage"],
+      expires_at: parse_expires_at(params["expires_at"])
     }
 
     case Flags.set_flag_state(
@@ -135,4 +151,24 @@ defmodule BeaconWeb.FlagLive.Show do
   end
 
   defp state_for(flag_states, environment_id), do: Map.fetch!(flag_states, environment_id)
+
+  # A browser's native <input type="datetime-local"> never sends
+  # anything but "" or "YYYY-MM-DDTHH:MM" — the :error branch here is
+  # only reachable by a tampered or hand-crafted request, and treating
+  # that the same as "no expiry given" is a reasonable, safe default
+  # for a field a changeset also validates on the way in.
+  defp parse_expires_at(value) when value in [nil, ""], do: nil
+
+  defp parse_expires_at(value) do
+    case NaiveDateTime.from_iso8601(value <> ":00") do
+      {:ok, naive} -> DateTime.from_naive!(naive, "Etc/UTC")
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp expires_at_input_value(%{expires_at: nil}), do: nil
+
+  defp expires_at_input_value(%{expires_at: expires_at}) do
+    expires_at |> DateTime.to_naive() |> NaiveDateTime.to_iso8601() |> String.slice(0, 16)
+  end
 end
